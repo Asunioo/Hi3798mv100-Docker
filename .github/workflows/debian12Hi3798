@@ -23,92 +23,70 @@ jobs:
       - name: Install Dependencies & Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            bc bison flex libssl-dev make libc6-dev libncurses5-dev \
-            crossbuild-essential-armhf dwarves cpio kmod lzop u-boot-tools
+          sudo apt-get install -y bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-armhf
+          echo "ARCH=arm" >> $GITHUB_ENV
+          echo "CROSS_COMPILE=arm-linux-gnueabihf-" >> $GITHUB_ENV
 
-      - name: Download Kernel Source
+      - name: Clone Kernel Source
         run: |
-          git clone --depth 1 --branch ${{ github.event.inputs.kernel_version }} https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux-src
+          git clone --depth 1 --branch ${{ github.event.inputs.kernel_version }} https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux
+          cd linux
 
-      - name: Configure Kernel Base
+      - name: Configure Kernel & Enable Docker Features
         run: |
-          cd linux-src
-          export ARCH=arm
-          export CROSS_COMPILE=arm-linux-gnueabihf-
-          make ${{ github.event.inputs.base_defconfig }}
+          cd linux
+          # 1. 生成基础配置
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- ${{ github.event.inputs.base_defconfig }}
 
-      - name: Force Enable Docker & Debian 12 Features
-        run: |
-          cd linux-src
-          export ARCH=arm
-          export CROSS_COMPILE=arm-linux-gnueabihf-
+          # 2. 强制开启 Docker 和 Debian 12 所需的关键特性
+          # 注意顺序：必须先开启 USER_NS，否则 CGROUP_NS 无法开启
+          ./scripts/config --enable NAMESPACES
+          ./scripts/config --enable USER_NS
+          ./scripts/config --enable CGROUPS
+          ./scripts/config --enable CGROUP_NS
+          ./scripts/config --enable NETFILTER_XT_MATCH_ADDRTYPE
+          ./scripts/config --enable NETFILTER_XT_MATCH_IPVS
+          ./scripts/config --enable IP_VS
+          ./scripts/config --enable IP_VS_NFCT
+          ./scripts/config --enable IP_VS_PROTO_TCP
+          ./scripts/config --enable IP_VS_PROTO_UDP
+          ./scripts/config --enable IP_VS_RR
+          ./scripts/config --enable OVERLAY_FS
+          ./scripts/config --enable BRIDGE
+          ./scripts/config --enable BRIDGE_VLAN_FILTERING
 
-          echo "=== Patching .config for Cgroup NS and Docker ==="
+          # 3. 处理依赖关系并应用更改
+          # 这一步至关重要，它会解决因为缺少依赖而被禁用的问题
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
 
-          # 1. 开启基础命名空间支持 (CGROUP_NS 的强依赖)
-          scripts/config --enable NAMESPACES
-          scripts/config --enable USER_NS
-
-          # 2. 开启 Cgroup Namespace
-          scripts/config --enable CGROUP_NS
-
-          # 3. 开启 Docker 网络桥接支持
-          scripts/config --enable BRIDGE
-          scripts/config --enable BRIDGE_NETFILTER
-          scripts/config --enable BRIDGE_VLAN_FILTERING
-          scripts/config --enable IP_NF_TARGET_MASQUERADE
-          scripts/config --enable NETFILTER_XT_MATCH_ADDRTYPE
-
-          # 4. 开启 OverlayFS (Docker 存储驱动必须)
-          scripts/config --enable OVERLAY_FS
-
-          # 5. 开启其他容器常用功能
-          scripts/config --enable VETH
-          scripts/config --enable IP_VS
-          scripts/config --enable NF_CONNTRACK
-          scripts/config --enable NET_NS
-
-          # 关键步骤：重新应用默认值以解析依赖关系
-          # 这会将刚才开启的选项“固化”，并处理未满足的子依赖
-          yes "" | make oldconfig
-
-          # 验证关键选项是否真的被开启了
-          echo "=== Verifying Configuration ==="
-          grep -E "CONFIG_CGROUP_NS|CONFIG_USER_NS|CONFIG_OVERLAY_FS" .config || true
-
+          # 4. 验证关键配置是否真的生效了 (防止静默失败)
           if ! grep -q "CONFIG_CGROUP_NS=y" .config; then
-             echo "::error::Failed to enable CONFIG_CGROUP_NS. Check dependencies."
-             exit 1
+            echo "Error: CONFIG_CGROUP_NS is still not enabled!"
+            grep "CGROUP_NS" .config || true
+            exit 1
           fi
 
-      - name: Compile Kernel
+      - name: Verify Configuration (Debug)
         run: |
-          cd linux-src
-          export ARCH=arm
-          export CROSS_COMPILE=arm-linux-gnueabihf-
-          export CONCURRENCY_LEVEL=$(nproc)
+          cd linux
+          echo "=== Checking Critical Configs ==="
+          grep "CONFIG_CGROUP_NS" .config
+          grep "CONFIG_USER_NS" .config
+          grep "CONFIG_OVERLAY_FS" .config
 
-          # 编译 zImage 和 dtbs (设备树)
-          make -j$(nproc) zImage dtbs modules
-
-      - name: Install Modules
+      - name: Build Kernel
         run: |
-          cd linux-src
-          export ARCH=arm
-          export CROSS_COMPILE=arm-linux-gnueabihf-
-          export INSTALL_MOD_PATH=../modules_install
-          make modules_install
+          cd linux
+          # 编译 zImage 和 dtbs
+          make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc) zImage dtbs modules
 
       - name: Package Artifacts
         run: |
           mkdir -p artifacts
-          cp linux-src/arch/arm/boot/zImage artifacts/
-          cp linux-src/arch/arm/boot/dts/*.dtb artifacts/ || true
-          cp linux-src/.config artifacts/config_${{ github.event.inputs.kernel_version }}
-
-          # 打包模块
-          tar czf artifacts/modules.tar.gz -C modules_install lib/modules
+          cp linux/arch/arm/boot/zImage artifacts/
+          cp linux/arch/arm/boot/dts/*.dtb artifacts/ || true # 忽略如果没有dtb的情况
+          # 打包模块 (可选，视您的需求而定)
+          # make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=../artifacts/modules modules_install
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
