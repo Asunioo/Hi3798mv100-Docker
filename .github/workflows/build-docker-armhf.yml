@@ -1,36 +1,29 @@
 name: Build Docker for Hi3798MV100 (Debian12 armhf)
 
-# 触发规则：push 标签、手动触发、push 主分支
 on:
   push:
     branches: [ main ]
     tags: [ 'v*' ]
-  workflow_dispatch: # 手动运行按钮
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04 # 基础编译环境
-    strategy:
-      fail-fast: false
-
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤1：启用 qemu 跨架构模拟（编译 armhf 必备）
       - name: Setup QEMU for ARMhf
         uses: docker/setup-qemu-action@v3
         with:
           platforms: linux/arm/v7
 
-      # 步骤2：安装系统依赖
       - name: Install system dependencies
         run: |
           sudo apt update -y
           sudo apt install -y build-essential git curl wget libssl-dev libsystemd-dev \
           binfmt-support crossbuild-essential-armhf dpkg-dev devscripts iptables
 
-      # 步骤3: 安装固定版本 Go 1.21.13
       - name: Install Go 1.21.13
         run: |
           wget https://dl.google.com/go/go1.21.13.linux-amd64.tar.gz
@@ -39,33 +32,27 @@ jobs:
           echo "PATH=$PATH:/usr/local/go/bin" >> $GITHUB_ENV
           go version
 
-      # 步骤4: 拉取 Docker 源码并切换到兼容版本 v24.0.9
       - name: Clone Docker Moby source
         run: |
           git clone https://github.com/moby/moby.git docker-src
           cd docker-src
           git checkout v24.0.9
 
-      # 步骤5: 源码适配补丁（内核4.4 + armhf + cgroup v1 + iptables-legacy）
       - name: Apply patch for Hi3798MV100 & Debian12
         run: |
           cd docker-src
-          # 强制使用 iptables-legacy，禁用 nftables
           sed -i 's/iptables-nft/iptables-legacy/g' hack/dind
           sed -i 's/nftables/iptables/g' daemon/network/iptables/iptables.go
-          # 导出编译环境变量
           echo "GOARCH=arm" >> $GITHUB_ENV
           echo "GOARM=7" >> $GITHUB_ENV
           echo "CGO_ENABLED=1" >> $GITHUB_ENV
           echo "DOCKER_CGROUP_DRIVER=cgroupfs" >> $GITHUB_ENV
 
-      # 步骤6: 编译 Docker 静态二进制
       - name: Build Docker static binary (armhf)
         run: |
           cd docker-src
           make static DOCKER_BUILD_ARGS="--platform linux/arm/v7"
 
-      # 步骤7: 打包为 Debian12 armhf .deb 安装包
       - name: Build Debian deb package
         run: |
           cd docker-src
@@ -73,7 +60,6 @@ jobs:
           PKG_NAME="docker-hi3798mv100_24.0.9_armhf"
           mkdir -p ${PKG_NAME}/{DEBIAN,usr/bin}
           cp ${BIN_DIR}/* ${PKG_NAME}/usr/bin/
-          # 生成 control 文件
           cat > ${PKG_NAME}/DEBIAN/control << EOF
 Package: docker-hi3798mv100
 Version: 24.0.9
@@ -82,17 +68,14 @@ Maintainer: CI Build
 Description: Docker 24.0.9 for Hi3798MV100 (Linux 4.4 + Debian12 Bookworm)
 Depends: libc6, libsystemd0, iptables, ca-certificates
 EOF
-          # 构建 deb
           dpkg-deb -b ${PKG_NAME} ../docker-hi3798mv100_24.0.9_armhf.deb
 
-      # 步骤8: 上传编译产物（工件）
       - name: Upload deb package
         uses: actions/upload-artifact@v4
         with:
           name: docker-deb-armhf
           path: docker-hi3798mv100_24.0.9_armhf.deb
 
-      # 步骤9: 推送至 GitHub Release（打 tag 时自动发布）
       - name: Publish to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
@@ -105,3 +88,4 @@ EOF
             - 适配内核: Linux 4.4.x
             - Cgroup: cgroup v1 (cgroupfs)
             - 网络: iptables-legacy
+
