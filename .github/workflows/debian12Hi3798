@@ -24,12 +24,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison flex libssl-dev make libc6-dev libncurses5-dev crossbuild-essential-armhf
-          echo "ARCH=arm" >> $GITHUB_ENV
-          echo "CROSS_COMPILE=arm-linux-gnueabihf-" >> $GITHUB_ENV
+          # 安装 U-Boot 工具用于生成 mkimage (如果需要)
+          sudo apt-get install -y u-boot-tools
 
       - name: Clone Kernel Source
         run: |
-          git clone --depth 1 --branch ${{ github.event.inputs.kernel_version }} https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux
+          git clone --depth 1 --branch ${{ github.event.inputs.kernel_version }} https://github.com/torvalds/linux.git linux
           cd linux
 
       - name: Configure Kernel & Enable Docker Features
@@ -38,41 +38,42 @@ jobs:
           # 1. 生成基础配置
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- ${{ github.event.inputs.base_defconfig }}
 
-          # 2. 强制开启 Docker 和 Debian 12 所需的关键特性
-          # 注意顺序：必须先开启 USER_NS，否则 CGROUP_NS 无法开启
-          ./scripts/config --enable NAMESPACES
-          ./scripts/config --enable USER_NS
-          ./scripts/config --enable CGROUPS
-          ./scripts/config --enable CGROUP_NS
-          ./scripts/config --enable NETFILTER_XT_MATCH_ADDRTYPE
-          ./scripts/config --enable NETFILTER_XT_MATCH_IPVS
-          ./scripts/config --enable IP_VS
-          ./scripts/config --enable IP_VS_NFCT
-          ./scripts/config --enable IP_VS_PROTO_TCP
-          ./scripts/config --enable IP_VS_PROTO_UDP
-          ./scripts/config --enable IP_VS_RR
-          ./scripts/config --enable OVERLAY_FS
-          ./scripts/config --enable BRIDGE
-          ./scripts/config --enable BRIDGE_VLAN_FILTERING
+          # 2. 强制开启 Docker/Debian 必须的选项及其依赖
+          # 注意：必须按顺序或成组开启，因为存在依赖关系
+          scripts/config --enable CONFIG_NAMESPACES
+          scripts/config --enable CONFIG_USER_NS
+          scripts/config --enable CONFIG_CGROUPS
+          scripts/config --enable CONFIG_CGROUP_NS
+          scripts/config --enable CONFIG_PID_NS
+          scripts/config --enable CONFIG_NET_NS
+          scripts/config --enable CONFIG_IPC_NS
+          scripts/config --enable CONFIG_UTS_NS
+          scripts/config --enable CONFIG_OVERLAY_FS
+          scripts/config --enable CONFIG_BRIDGE
+          scripts/config --enable CONFIG_BRIDGE_VLAN_FILTERING
+          scripts/config --enable CONFIG_VETH
+          scripts/config --enable CONFIG_MACVLAN
 
-          # 3. 处理依赖关系并应用更改
-          # 这一步至关重要，它会解决因为缺少依赖而被禁用的问题
+          # 3. 再次运行 olddefconfig 解决依赖冲突并应用更改
           make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- olddefconfig
 
-          # 4. 验证关键配置是否真的生效了 (防止静默失败)
+          # 4. 验证关键配置是否真的生效了
+          echo "=== Checking Critical Configs ==="
+          grep -E "CONFIG_CGROUP_NS|CONFIG_USER_NS|CONFIG_OVERLAY_FS" .config || true
+
           if ! grep -q "CONFIG_CGROUP_NS=y" .config; then
-            echo "Error: CONFIG_CGROUP_NS is still not enabled!"
-            grep "CGROUP_NS" .config || true
+            echo "::error::CRITICAL ERROR: CONFIG_CGROUP_NS is still not enabled!"
             exit 1
           fi
 
-      - name: Verify Configuration (Debug)
+      - name: Verify Configuration (Debug Step)
         run: |
           cd linux
-          echo "=== Checking Critical Configs ==="
-          grep "CONFIG_CGROUP_NS" .config
-          grep "CONFIG_USER_NS" .config
-          grep "CONFIG_OVERLAY_FS" .config
+          echo "--- Verifying Docker Requirements ---"
+          ./scripts/config --state CONFIG_CGROUP_NS
+          ./scripts/config --state CONFIG_USER_NS
+          ./scripts/config --state CONFIG_OVERLAY_FS
+          # 如果上面的检查失败，这里会直接报错停止
 
       - name: Build Kernel
         run: |
@@ -82,14 +83,14 @@ jobs:
 
       - name: Package Artifacts
         run: |
-          mkdir -p artifacts
-          cp linux/arch/arm/boot/zImage artifacts/
-          cp linux/arch/arm/boot/dts/*.dtb artifacts/ || true # 忽略如果没有dtb的情况
-          # 打包模块 (可选，视您的需求而定)
-          # make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=../artifacts/modules modules_install
+          mkdir -p output
+          cp linux/arch/arm/boot/zImage output/
+          cp linux/arch/arm/boot/dts/*.dtb output/ || true # 复制所有 dtb，防止路径问题
+          # 打包 modules (可选，视您的根文件系统需求而定)
+          # make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=output/modules modules_install
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: hi3798mv100-kernel-${{ github.event.inputs.kernel_version }}
-          path: artifacts/
+          path: output/
