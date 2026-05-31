@@ -61,13 +61,13 @@ jobs:
           mkdir -p ${PKG_NAME}/{DEBIAN,usr/bin}
           cp ${BIN_DIR}/* ${PKG_NAME}/usr/bin/
           cat > ${PKG_NAME}/DEBIAN/control << EOF
-Package: docker-hi3798mv100
-Version: 24.0.9
-Architecture: armhf
-Maintainer: CI Build
-Description: Docker 24.0.9 for Hi3798MV100 (Linux 4.4 + Debian12 Bookworm)
-Depends: libc6, libsystemd0, iptables, ca-certificates
-EOF
+          Package: docker-hi3798mv100
+          Version: 24.0.9
+          Architecture: armhf
+          Maintainer: CI Build
+          Description: Docker 24.0.9 for Hi3798MV100 (Linux 4.4 + Debian12 Bookworm)
+          Depends: libc6, libsystemd0, iptables, ca-certificates
+          EOF
           dpkg-deb -b ${PKG_NAME} ../docker-hi3798mv100_24.0.9_armhf.deb
 
       - name: Upload deb package
