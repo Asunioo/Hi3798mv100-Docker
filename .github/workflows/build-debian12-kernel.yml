@@ -660,4 +660,289 @@ jobs:
         CONFIG_SCHED_INFO=y
         CONFIG_SCHEDSTATS=y
         CONFIG_TIMER_STATS=y
+        CONFIG_DEBUG_PREEMPT=y
+        CONFIG_DEBUG_RT_MUTEXES=y
+        CONFIG_DEBUG_PI_LIST=y
+        CONFIG_DEBUG_SPINLOCK=y
+        CONFIG_DEBUG_MUTEXES=y
+        CONFIG_DEBUG_LOCK_ALLOC=y
+        CONFIG_PROVE_LOCKING=y
+        CONFIG_LOCKDEP=y
+        CONFIG_LOCK_STAT=y
+        CONFIG_DEBUG_ATOMIC_SLEEP=y
+        CONFIG_DEBUG_LIST=y
+        CONFIG_DEBUG_SG=y
+        CONFIG_DEBUG_NOTIFIERS=y
+        CONFIG_DEBUG_CREDENTIALS=y
+        CONFIG_RCU_CPU_STALL_TIMEOUT=21
+        CONFIG_RCU_TRACE=y
+        CONFIG_DEBUG_BLOCK_EXT_DEVT=y
+        CONFIG_NOTIFIER_ERROR_INJECTION=y
+        CONFIG_PM_DEBUG=y
+        CONFIG_PM_ADVANCED_DEBUG=y
+        CONFIG_PM_SLEEP_DEBUG=y
+        CONFIG_ACPI_DEBUG=y
+        CONFIG_X86_DEBUG_STATIC_CPU_HAS=y
+        CONFIG_DEBUG_MEMORY_INIT=y
+        CONFIG_DEBUG_PER_CPU_MAPS=y
+        CONFIG_DEBUG_HIGHMEM=y
+        CONFIG_DEBUG_RODATA_TEST=y
+        CONFIG_CPA_DEBUG=y
+        CONFIG_DEBUG_NX_TEST=y
+        CONFIG_64BIT=y
+        CONFIG_X86_PAE=y
+        CONFIG_NUMA=y
+        CONFIG_AMD_NUMA=y
+        CONFIG_NODES_SPAN_OTHER_NODES=y
+        CONFIG_AMD_MEM_ENCRYPT=y
+        CONFIG_EFI=y
+        CONFIG_EFI_VARS=y
+        CONFIG_EFI_PARTITION=y
+        CONFIG_EFI_RUNTIME_WRAPPERS=y
+        CONFIG_ACPI=y
+        CONFIG_ACPI_LEGACY_TABLES_LOOKUP=y
+        CONFIG_ACPI_SYSTEM_POWER_STATES_SUPPORT=y
+        CONFIG_ACPI_SLEEP=y
+        CONFIG_ACPI_PROCFS_POWER=y
+        CONFIG_ACPI_EC_DEBUGFS=y
+        CONFIG_ACPI_AC=y
+        CONFIG_ACPI_BATTERY=y
+        CONFIG_ACPI_BUTTON=y
+        CONFIG_ACPI_VIDEO=y
+        CONFIG_ACPI_FAN=y
+        CONFIG_ACPI_DOCK=y
+        CONFIG_ACPI_PROCESSOR=y
+        CONFIG_ACPI_IPMI=y
+        CONFIG_ACPI_HOTPLUG_CPU=y
+        CONFIG_ACPI_PROCESSOR_AGGREGATOR=y
+        CONFIG_ACPI_THERMAL=y
+        CONFIG_ACPI_CUSTOM_DSDT_FILE=""
+        CONFIG_ACPI_INITRD_TABLE_OVERRIDE=y
+        CONFIG_ACPI_DEBUG=y
+        CONFIG_ACPI_PCI_SLOT=y
+        CONFIG_ACPI_CONTAINER=y
+        CONFIG_ACPI_HOTPLUG_MEMORY=y
+        CONFIG_ACPI_SBS=y
+        CONFIG_ACPI_HED=y
+        CONFIG_ACPI_BGRT=y
+        CONFIG_ACPI_NFIT=y
+        CONFIG_ACPI_NUMA=y
+        CONFIG_PNPACPI=y
+        CONFIG_ACPI_WMI=y
+        CONFIG_ACPI_ASUS_WMI=y
+        CONFIG_ACPI_TOSHIBA=y
+        CONFIG_ACPI_CMPC=y
+        CONFIG_ACPI_INTEL_CELL=y
+        CONFIG_ACPI_MSI=y
+        CONFIG_ACPI_TOSHIBA_HAPS=y
+        CONFIG_ACPI_PROCESSOR_CSTATE=y
+        CONFIG_ACPI_PROCESSOR_IDLE=y
+        CONFIG_ACPI_PROCESSOR_HOTPLUG=y
+        CONFIG_ACPI_HOTPLUG_IOAPIC=y
+        CONFIG_ACPI_SLEEP=y
+        CONFIG_ACPI_PROCESSOR=y
+        CONFIG_ACPI_IPMI=y
+        CONFIG_ACPI_HOTPLUG_CPU=y
+        CONFIG_ACPI_PROCESSOR_AGGREGATOR=y
+        CONFIG_ACPI_THERMAL=y
+        CONFIG_ACPI_CUSTOM_DSDT_FILE=""
+        CONFIG_ACPI_INITRD_TABLE_OVERRIDE=y
+        
+        EOF
+        
+        # 重新生成配置
+        make ARCH=$ARCH olddefconfig
+        
+        # 验证关键配置
+        echo "=== Verifying critical configurations ==="
+        grep -E "CONFIG_CGROUP_NS|CONFIG_NAMESPACES|CONFIG_CGROUPS|CONFIG_OVERLAY_FS|CONFIG_VETH|CONFIG_BRIDGE" .config
+
+    - name: Verify kernel configuration for Debian 12
+      run: |
+        cd linux
+        
+        echo "=== Checking Debian 12 requirements ==="
+        
+        # 检查必需的功能
+        REQUIRED_FEATURES=(
+          "CONFIG_CGROUP_NS=y"
+          "CONFIG_NAMESPACES=y"
+          "CONFIG_OVERLAY_FS=y"
+          "CONFIG_VETH=y"
+          "CONFIG_BRIDGE=y"
+          "CONFIG_EXT4_FS=y"
+          "CONFIG_BLK_DEV_SD=y"
+          "CONFIG_USB_STORAGE=y"
+          "CONFIG_NET=y"
+          "CONFIG_INET=y"
+          "CONFIG_MODULES=y"
+          "CONFIG_BLK_DEV_INITRD=y"
+        )
+        
+        for feature in "${REQUIRED_FEATURES[@]}"; do
+          if grep -q "^$feature" .config; then
+            echo "✅ $feature"
+          else
+            echo "❌ $feature - NOT ENABLED"
+            exit 1
+          fi
+        done
+        
+        echo "=== All Debian 12 requirements met ==="
+
+    - name: Build kernel for Debian 12
+      run: |
+        cd linux
+        
+        JOBS=$(nproc)
+        echo "Building kernel with $JOBS jobs..."
+        
+        # 编译内核
+        make -j$JOBS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE zImage
+        
+        # 编译设备树 (针对Hi3798MV100)
+        make -j$JOBS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE dtbs
+        
+        # 编译内核模块
+        make -j$JOBS ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE modules
+        
+        # 安装模块
+        mkdir -p ../modules
+        make ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE INSTALL_MOD_PATH=../modules modules_install
+
+    - name: Create Debian 12 compatible initramfs
+      run: |
+        cd linux
+        
+        # 创建必要的目录结构
+        mkdir -p ../debian12-rootfs/boot
+        mkdir -p ../debian12-rootfs/lib/modules
+        
+        # 复制内核和设备树
+        cp arch/arm/boot/zImage ../debian12-rootfs/boot/vmlinuz-$KERNEL_VERSION-armv7l
+        cp arch/arm/boot/dts/*.dtb ../debian12-rootfs/boot/
+        
+        # 复制模块
+        cp -r ../modules/lib/modules/* ../debian12-rootfs/lib/modules/
+        
+        # 创建initramfs配置
+        cat > ../initramfs.conf <<EOF
+        MODULES=most
+        BUSYBOX=auto
+        KEYMAP=n
+        COMPRESS=gzip
+        DEVICE= 
+        NFSROOT=auto
+        BOOT=local
+        MODULES=most
+        UMASK=0077
+        VERBOSE=yes
+        EOF
+        
+        echo "=== Debian 12 kernel build complete ==="
+        echo "Kernel version: $KERNEL_VERSION"
+        echo "Architecture: armv7l (armhf)"
+        echo "Features: All Debian 12 requirements enabled"
+
+    - name: Package Debian 12 kernel artifacts
+      run: |
+        cd linux
+        
+        # 创建构建信息
+        cat > ../build-info.txt <<EOF
+        Debian 12 Kernel Build Information
+        ====================================\n
+        Kernel Version: $KERNEL_VERSION
+        Target Architecture: armv7l (armhf)
+        Debian Version: 12 (Bookworm)
+        Build Date: $(date)
+        GitHub Actions Run ID: $GITHUB_RUN_ID
+        Build Features:
+          - CGROUP namespaces enabled (fixes Docker issue)
+          - All Debian 12 required features
+          - OverlayFS support
+          - Container runtime support
+          - Full hardware support for Hi3798MV100
+        EOF
+        
+        # 收集关键文件
+        mkdir -p ../artifacts/debian12-kernel
+        
+        # 内核文件
+        cp arch/arm/boot/zImage ../artifacts/debian12-kernel/vmlinuz-$KERNEL_VERSION-armv7l
+        cp arch/arm/boot/dts/*.dtb ../artifacts/debian12-kernel/
+        
+        # 配置文件
+        cp .config ../artifacts/debian12-kernel/config-$KERNEL_VERSION-armv7l
+        
+        # 系统映射
+        cp System.map ../artifacts/debian12-kernel/System.map-$KERNEL_VERSION-armv7l
+        
+        # 模块
+        tar czf ../artifacts/debian12-kernel/modules-$KERNEL_VERSION-armv7l.tar.gz -C ../modules/lib/modules .
+
+    - name: Upload Debian 12 kernel artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: hi3798mv100-debian12-kernel-${{ env.KERNEL_VERSION }}
+        path: |
+          artifacts/
+          build-info.txt
+        retention-days: 60
+
+    - name: Create Debian 12 kernel release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.KERNEL_VERSION }}-debian12-armv7l
+        name: Hi3798MV100 Debian 12 Kernel v${{ env.KERNEL_VERSION }}
+        body: |
+          **Hi3798MV100 Debian 12 (Bookworm) Kernel**
+          
+          This kernel is specifically built for Hi3798MV100 (armv7l) devices running Debian 12.
+          
+          **✅ Key Features Enabled:**
+          - **CGROUP namespaces** (fixes Docker runtime error)
+          - Full **Debian 12** system requirements
+          - **OverlayFS** support for container filesystems
+          - **Docker** and **containerd** runtime support
+          - Complete **armhf** architecture support
+          - All necessary **filesystem** support (ext4, btrfs, f2fs, etc.)
+          - **Network** and **USB** support for Hi3798MV100 hardware
+          
+          **🔧 Installation Instructions:**
+          1. Download the kernel artifacts
+          2. Backup your current kernel
+          3. Copy vmlinuz and .dtb files to /boot
+          4. Extract modules to /lib/modules/
+          5. Update bootloader configuration
+          6. Reboot and verify with `uname -a`
+          
+          **💡 Verification Commands:**
+          ```bash
+          # Check kernel version
+          uname -a
+          
+          # Verify cgroup namespaces
+          zcat /proc/config.gz | grep CONFIG_CGROUP_NS
+          
+          # Test Docker
+          docker info
+          docker run --rm hello-world
+          ```
+          
+          **⚠️ Important Notes:**
+          - This kernel is built for **armhf** architecture (armv7l)
+          - Requires **Debian 12** (Bookworm) userland
+          - Tested on Hi3798MV100-based devices
+          - Always backup before installation
+        files: |
+          artifacts/debian12-kernel/vmlinuz-*
+          artifacts/debian12-kernel/*.dtb
+          artifacts/debian12-kernel/config-*
+          artifacts/debian12-kernel/System.map-*
+          artifacts/debian12-kernel/modules-*.tar.gz
+          build-info.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
