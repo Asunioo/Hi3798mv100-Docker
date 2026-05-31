@@ -24,7 +24,7 @@ jobs:
           sudo apt install -y --no-install-recommends \
             build-essential git curl wget libssl-dev libsystemd-dev \
             binfmt-support crossbuild-essential-armhf dpkg-dev devscripts \
-            iptables ca-certificates
+            iptables ca-certificates make gcc
 
       - name: Install Go 1.21.13 (fixed version for armhf compatibility)
         run: |
@@ -43,23 +43,27 @@ jobs:
       - name: Apply patch for Hi3798MV100 & Debian12
         run: |
           cd docker-src
-          # 仅修改 hack/dind 脚本，强制使用 iptables-legacy
+          # 强制 hack/dind 使用 iptables-legacy
           sed -i 's/iptables-nft/iptables-legacy/g' hack/dind
           # 导出编译环境变量
           echo "GOARCH=arm" >> $GITHUB_ENV
           echo "GOARM=7" >> $GITHUB_ENV
           echo "CGO_ENABLED=1" >> $GITHUB_ENV
           echo "DOCKER_CGROUP_DRIVER=cgroupfs" >> $GITHUB_ENV
+          echo "DOCKER_BUILD_ARGS=--platform linux/arm/v7" >> $GITHUB_ENV
 
-      - name: Build Docker static binary (armhf)
+      - name: Build Docker binary (armhf)
         run: |
           cd docker-src
-          make static DOCKER_BUILD_ARGS="--platform linux/arm/v7"
+          # 用 make binary 替代 make static，适配新版 Makefile
+          make binary
+          # 验证编译产物
+          ls -la bundles/binary/linux/arm/v7/
 
       - name: Build Debian deb package
         run: |
           cd docker-src
-          BIN_DIR="bundles/binary/static/linux/arm/v7"
+          BIN_DIR="bundles/binary/linux/arm/v7"
           PKG_NAME="docker-hi3798mv100_24.0.9_armhf"
           mkdir -p ${PKG_NAME}/{DEBIAN,usr/bin}
           cp ${BIN_DIR}/* ${PKG_NAME}/usr/bin/
